@@ -45,6 +45,6 @@ Parameters: `seller` (required), `date` (six digits), `name`, `count` (positive 
 
 `GET /api/sellers/resolve?seller=loveshakedata` validates a public seller nickname and returns its resolved user ID before the frontend saves it to the local shop list.
 
-Added seller nicknames are stored in the browser's local storage. **All shops** keeps the date, idol/name, and optional count filters active, then searches the shop catalog of every saved seller with live per-shop progress.
+Added seller nicknames are stored in the browser's local storage. **All shops** keeps the date, idol/name, and optional count filters active, then searches both feed posts and shop listings for every saved seller with live per-shop progress.
 
 Only public API responses are used. Inactive pages and deleted previews may remain unavailable even when their public catalog metadata is searchable.

@@ -107,7 +107,7 @@ export default function App() {
           const shop = searchShops[nextIndex++];
           if (!shop) continue;
           try {
-            const payload = await requestSearch(shop, 'shop');
+            const payload = await requestSearch(shop, 'both');
             collected.push(...payload.results);
             totals.posts += payload.fetched.posts;
             totals.shop += payload.fetched.shop;
@@ -163,7 +163,7 @@ export default function App() {
     </form>
 
     <section className="results" aria-live="polite">
-      {loading && <div className="state loading-state"><div className="spinner" /><h2>{source === 'all-shop' ? 'Searching every saved shop' : 'Searching the full archive'}</h2><p>{source === 'all-shop' ? `${progress.completed} of ${progress.total} shops complete` : 'Fetching and checking every available page…'}</p><div className={`progress-track ${source === 'all-shop' ? 'determinate' : ''}`} role="progressbar" aria-label="Loading search results" aria-valuemin={0} aria-valuemax={100} aria-valuenow={source === 'all-shop' ? progressPercent : undefined}><span style={source === 'all-shop' ? { width: `${progressPercent}%` } : undefined} /></div><small>{source === 'all-shop' ? `${progressPercent}% complete` : 'Large seller archives can take a little longer'}</small></div>}
+      {loading && <div className="state loading-state"><div className="spinner" /><h2>{source === 'all-shop' ? 'Searching every saved shop' : 'Searching the full archive'}</h2><p>{source === 'all-shop' ? `${progress.completed} of ${progress.total} shops complete · posts + listings` : 'Fetching and checking every available page…'}</p><div className={`progress-track ${source === 'all-shop' ? 'determinate' : ''}`} role="progressbar" aria-label="Loading search results" aria-valuemin={0} aria-valuemax={100} aria-valuenow={source === 'all-shop' ? progressPercent : undefined}><span style={source === 'all-shop' ? { width: `${progressPercent}%` } : undefined} /></div><small>{source === 'all-shop' ? `${progressPercent}% complete` : 'Large seller archives can take a little longer'}</small></div>}
       {!loading && error && <div className="state error"><b>!</b><h2>Search hit a snag</h2><p>{error}</p></div>}
       {!loading && !error && searched && results.length === 0 && <div className="state"><b>0</b><h2>No matching sets</h2><p>Try Broad mode, remove the file count, or include inactive listings.</p></div>}
       {!loading && !error && results.length > 0 && <>
