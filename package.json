@@ -1,12 +1,13 @@
 {
   "name": "gank-post-finder",
   "private": true,
-  "workspaces": ["backend", "frontend"],
+  "workspaces": ["frontend"],
   "scripts": {
-    "dev": "concurrently -n api,web -c cyan,magenta \"npm run dev -w backend\" \"npm run dev -w frontend\"",
-    "build": "npm run build -w backend && npm run build -w frontend",
-    "test": "npm run test -w backend",
-    "start": "npm run start -w backend"
+    "predev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\prepare-dev.ps1 && scripts\\go-local.bat -C backend build -o dist/gank-api.exe ./cmd/server",
+    "dev": "concurrently -n api,web -c cyan,magenta \"backend\\dist\\gank-api.exe\" \"npm run dev -w frontend\"",
+    "build": "scripts\\go-local.bat -C backend build -o dist/gank-api.exe ./cmd/server && npm run build -w frontend",
+    "test": "scripts\\go-local.bat -C backend test ./...",
+    "start": "backend\\dist\\gank-api.exe"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"
