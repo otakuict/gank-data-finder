@@ -6,7 +6,7 @@ A local full-stack search tool for public Gank seller posts and catalog listings
 
 - Node.js 20 or newer
 - npm 10 or newer
-- Go 1.24 or newer
+- Go 1.27 or newer (as required by `backend/go.mod`)
 
 ## Install and run
 
@@ -35,6 +35,67 @@ npm start
 ```
 
 On Windows, the npm commands use `scripts/go-local.bat`, which prefers the workspace-local Go toolchain when present and otherwise uses `go.exe` from `PATH`.
+
+## Production with Docker
+
+Run these commands from the repository root with Docker running in Linux container mode:
+
+```bash
+docker build --pull -t gank-post-finder:production .
+docker run -d --name gank-post-finder --restart unless-stopped -p 3001:3001 --read-only --cap-drop ALL --security-opt no-new-privileges:true gank-post-finder:production
+```
+
+Open **http://localhost:3001**. The image builds React and Go in separate stages,
+runs the Go tests during the build, and serves the frontend and `/api` from one
+Go process. The runtime runs as UID/GID `10001`, contains HTTPS CA certificates,
+and checks `/api/health` every 30 seconds. Node.js and Go build tools are not
+included in the runtime image. No server-side data volume is needed; saved
+sellers remain in browser local storage.
+
+`PORT` defaults to `3001`. If overriding it with `-e PORT=8080`, also change the
+port mapping to `-p 8080:8080`. `STATIC_DIR` defaults to `/app/public` in the
+image; outside Docker it is optional, so local API-only development still works.
+Missing files and unknown API endpoints return 404. Place an HTTPS reverse
+proxy in front of the container for a public deployment.
+
+```bash
+docker inspect --format '{{.State.Health.Status}}' gank-post-finder
+docker logs -f gank-post-finder
+docker stop gank-post-finder
+```
+
+## GitHub Actions deployment to an Ubuntu server
+
+The workflow in `.github/workflows/cicd.yml` builds the production image on pull
+requests to `main`. A push to `main` (or a manual run on `main`) logs in to
+Docker Hub, pushes an image tagged with the commit SHA, and deploys it using a
+**self-hosted GitHub Actions runner on the Ubuntu server**. The runner pulls the
+image and starts it on port `3001`. The deployment waits for the Docker health
+check; if it fails, the previous container is restored. GitHub does not need
+SSH access to the server.
+
+Prepare the Ubuntu server with Docker Engine and `bash`. Install a repository
+self-hosted runner following [GitHub's runner setup instructions](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners),
+and run it as a service. The runner
+account must be able to run `docker` without `sudo`; for example, add a
+dedicated runner account to the `docker` group and restart the runner service.
+The server needs outbound access to GitHub and Docker Hub, plus enough free
+space for the current and incoming image. Expose port `3001` or place an HTTPS
+reverse proxy in front of it. Pull requests build on GitHub-hosted runners and
+do not run on the production server.
+
+The workflow publishes to `otakuict/gank-post-finder`. Add these values in
+GitHub **Settings → Secrets and variables → Actions**:
+
+| Type | Name | Value |
+| --- | --- | --- |
+| Variable | `DOCKERHUB_USERNAME` | Docker Hub username with push access |
+| Secret | `DOCKERHUB_TOKEN` | Docker Hub access token with push and pull access |
+
+The same token is used to pull private images on the server. The
+[`docker/login-action`](https://github.com/docker/login-action) logs out at the
+end of each job. After deployment, check the container on the server with
+`docker ps` and `docker logs gank-post-finder`.
 
 ## API
 

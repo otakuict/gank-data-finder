@@ -1,0 +1,13 @@
+.git
+.tools
+.codex
+.agents
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+**/*.log
+**/.env
+**/.env.*
+**/*.pem
+**/*.key

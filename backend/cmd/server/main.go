@@ -96,6 +96,11 @@ func main() {
 		panic(err)
 	}
 	router.Use(gin.Logger(), gin.Recovery(), cors())
+	if staticDir := os.Getenv("STATIC_DIR"); staticDir != "" {
+		if err := serveFrontend(router, staticDir); err != nil {
+			panic(err)
+		}
+	}
 	router.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 	router.GET("/api/sellers/resolve", func(c *gin.Context) {
 		seller := strings.TrimSpace(c.Query("seller"))

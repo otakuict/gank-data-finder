@@ -1,0 +1,79 @@
+name: CI and deploy to Ubuntu server
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOCKERHUB_IMAGE: otakuict/gank-post-finder
+
+concurrency:
+  group: production-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      # The Dockerfile runs Go tests and builds the production frontend.
+      - name: Build production image
+        env:
+          IMAGE: gank-post-finder:${{ github.sha }}
+        run: docker build --pull --tag "$IMAGE" .
+
+      - name: Check Docker Hub username
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+        run: test -n "$DOCKERHUB_USERNAME"
+
+      - name: Log in to Docker Hub
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push image to Docker Hub
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          LOCAL_IMAGE: gank-post-finder:${{ github.sha }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker tag "$LOCAL_IMAGE" "$DOCKERHUB_IMAGE:$SHA"
+          docker push "$DOCKERHUB_IMAGE:$SHA"
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - name: Check out deployment script
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Pull and deploy image
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          image="$DOCKERHUB_IMAGE:$SHA"
+          docker pull "$image"
+          bash scripts/deploy-server.sh "$image"
