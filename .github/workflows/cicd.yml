@@ -55,7 +55,7 @@ jobs:
           docker push "$DOCKERHUB_IMAGE:$SHA"
 
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.DEPLOYMENT_MODE != 'gitops'
     needs: build
     runs-on: self-hosted
     timeout-minutes: 15
@@ -77,3 +77,21 @@ jobs:
           image="$DOCKERHUB_IMAGE:$SHA"
           docker pull "$image"
           bash scripts/deploy-server.sh "$image"
+
+  gitops:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.DEPLOYMENT_MODE == 'gitops'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Request a DevOps image update pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITOPS_DISPATCH_TOKEN }}
+          APPLICATION: gank-data-finder
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          jq -n --arg application "$APPLICATION" --arg sha "$IMAGE_SHA" \
+            '{event_type: "image-published", client_payload: {application: $application, sha: $sha}}' \
+            | gh api --method POST repos/otakuict/private-server-devops/dispatches --input -
