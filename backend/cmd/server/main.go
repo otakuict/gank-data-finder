@@ -148,6 +148,7 @@ func main() {
 		results := search.SearchRecords(posts, services, params)
 		c.JSON(http.StatusOK, gin.H{"seller": params.Seller, "userId": userID, "resultCount": len(results), "fetched": gin.H{"posts": len(posts), "shop": len(services)}, "results": results})
 	})
+	registerStreamSearch(router, client)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "3001"

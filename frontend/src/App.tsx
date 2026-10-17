@@ -1,7 +1,8 @@
-import { FormEvent, KeyboardEvent, useState, type CSSProperties } from 'react';
+import { FormEvent, KeyboardEvent, useRef, useState, type ClipboardEvent, type CSSProperties } from 'react';
 
-const defaultShops = ['idolxdata', 'kdatastudio', 'yoichi69', 'idollove', 'loveshakedata', 'datacoffeeshop'];
+const defaultShops = ['idolxdata', 'kdatastudio', 'yoichi69', 'idollove', 'loveshakedata', 'datacoffeeshop','girlskpopphoto','dubudatamaster'];
 type Source = 'posts' | 'shop' | 'both' | 'all-shop';
+type SearchSet = { id: number; date: string; name: string; count: string };
 type Result = {
   id: string; seller: string; source: 'Post' | 'Shop'; title: string; createdAt: string | null;
   fileCount: { value: number; approximate: boolean; raw: string } | null;
@@ -9,7 +10,8 @@ type Result = {
   postUrl: string | null; shopUrl: string | null; externalUrl: string | null;
   previewUrl: string | null; previewUnavailable: boolean; matchExplanation: string; rank: number;
 };
-type SearchPayload = { results: Result[]; fetched: { posts: number; shop: number } };
+type Fetched = { posts: number; shop: number };
+type StreamEvent = { type: 'result'; result: Result } | { type: 'done'; fetched: Fetched } | { type: 'error'; error: string };
 
 function initialShops() {
   try {
@@ -30,32 +32,76 @@ export default function App() {
   const [newShop, setNewShop] = useState('');
   const [addingShop, setAddingShop] = useState(false);
   const [shopMessage, setShopMessage] = useState('');
-  const [date, setDate] = useState('260827');
-  const [name, setName] = useState('chaewon');
-  const [count, setCount] = useState('');
+  const [searchSets, setSearchSets] = useState<SearchSet[]>([{ id: 1, date: '260827', name: 'chaewon', count: '' }]);
+  const nextSetId = useRef(2);
   const [source, setSource] = useState<Source>('both');
   const [includeInactive, setIncludeInactive] = useState(true);
   const [mode, setMode] = useState<'exact' | 'broad'>('exact');
   const [results, setResults] = useState<Result[]>([]);
-  const [fetched, setFetched] = useState<{ posts: number; shop: number } | null>(null);
+  const [fetched, setFetched] = useState<Fetched | null>(null);
   const [progress, setProgress] = useState({ completed: 0, total: 1 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [searchWarning, setSearchWarning] = useState('');
   const [searched, setSearched] = useState(false);
 
-  function buildQuery(sellerName: string, requestSource: 'posts' | 'shop' | 'both') {
+  function updateSearchSet(id: number, changes: Partial<SearchSet>) {
+    setSearchSets(sets => sets.map(set => set.id === id ? { ...set, ...changes } : set));
+  }
+
+  function addSearchSet() {
+    setSearchSets(sets => [...sets, { id: nextSetId.current++, date: '', name: '', count: '' }]);
+  }
+
+  function handleCluePaste(event: ClipboardEvent<HTMLInputElement>, id: number) {
+    const pasted = event.clipboardData.getData('text').trim().replace(/\s+/g, ' ');
+    const match = pasted.match(/^(\d{6})\s+(.+)$/);
+    if (!match) return;
+    event.preventDefault();
+    updateSearchSet(id, { date: match[1], name: match[2] });
+  }
+
+  function buildQuery(sellerName: string, requestSource: 'posts' | 'shop' | 'both', set: SearchSet) {
     const query = new URLSearchParams({ seller: sellerName, source: requestSource, mode, includeInactive: String(includeInactive) });
-    if (date) query.set('date', date);
-    if (name) query.set('name', name);
-    if (count) query.set('count', count);
+    if (set.date) query.set('date', set.date);
+    if (set.name) query.set('name', set.name);
+    if (set.count) query.set('count', set.count);
     return query;
   }
 
-  async function requestSearch(sellerName: string, requestSource: 'posts' | 'shop' | 'both'): Promise<SearchPayload> {
-    const response = await fetch(`/api/search?${buildQuery(sellerName, requestSource)}`);
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || `Search failed for ${sellerName}.`);
-    return payload;
+  async function requestSearch(sellerName: string, requestSource: 'posts' | 'shop' | 'both', set: SearchSet, onResult: (result: Result) => void): Promise<Fetched> {
+    const response = await fetch(`/api/search/stream?${buildQuery(sellerName, requestSource, set)}`);
+    if (!response.ok) {
+      const payload = await response.json();
+      throw new Error(payload.error || `Search failed for ${sellerName}.`);
+    }
+    if (!response.body) throw new Error('Streaming search is unavailable in this browser.');
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fetched: Fetched | null = null;
+    function handleLine(line: string) {
+      if (!line.trim()) return;
+      const event = JSON.parse(line) as StreamEvent;
+      if (event.type === 'result') onResult(event.result);
+      else if (event.type === 'done') fetched = event.fetched;
+      else if (event.type === 'error') throw new Error(event.error);
+    }
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+      let newline = buffer.indexOf('\n');
+      while (newline !== -1) {
+        handleLine(buffer.slice(0, newline));
+        buffer = buffer.slice(newline + 1);
+        newline = buffer.indexOf('\n');
+      }
+      if (done) break;
+    }
+    handleLine(buffer);
+    if (!fetched) throw new Error('Search ended before completion.');
+    return fetched;
   }
 
   async function addShop() {
@@ -87,47 +133,47 @@ export default function App() {
 
   async function search(event: FormEvent) {
     event.preventDefault();
-    setLoading(true); setError(''); setSearched(true); setResults([]); setFetched(null);
-    const searchShops = source === 'all-shop' ? shops : [seller];
-    setProgress({ completed: 0, total: searchShops.length });
-    try {
-      if (source !== 'all-shop') {
-        const payload = await requestSearch(seller, source);
-        setResults(payload.results); setFetched(payload.fetched); setProgress({ completed: 1, total: 1 });
-        return;
-      }
+    const activeSets = searchSets.filter(set => set.date.trim() || set.name.trim() || set.count.trim());
+    setError(''); setSearchWarning(''); setSearched(true); setResults([]); setFetched(null);
+    if (!activeSets.length) { setError('Enter a date, idol/name, or file count in at least one set.'); return; }
 
-      const collected: Result[] = [];
-      const totals = { posts: 0, shop: 0 };
-      const failures: string[] = [];
-      let nextIndex = 0;
-      let completed = 0;
-      async function worker() {
-        while (nextIndex < searchShops.length) {
-          const shop = searchShops[nextIndex++];
-          if (!shop) continue;
-          try {
-            const payload = await requestSearch(shop, 'both');
-            collected.push(...payload.results);
-            totals.posts += payload.fetched.posts;
-            totals.shop += payload.fetched.shop;
-          } catch { failures.push(shop); }
+    const searchShops = source === 'all-shop' ? shops : [seller];
+    const jobs = activeSets.flatMap(set => searchShops.map(shop => ({ set, shop })));
+    setLoading(true);
+    setProgress({ completed: 0, total: jobs.length });
+
+    const collected = new Map<string, Result>();
+    const totals = { posts: 0, shop: 0 };
+    const failures: string[] = [];
+    let nextIndex = 0;
+    let completed = 0;
+    let succeeded = 0;
+    async function worker() {
+      while (nextIndex < jobs.length) {
+        const job = jobs[nextIndex++];
+        try {
+          const jobFetched = await requestSearch(job.shop, source === 'all-shop' ? 'both' : source, job.set, result => {
+            const key = `${result.seller}:${result.source}:${result.id || result.postUrl || result.shopUrl || result.title}`;
+            const previous = collected.get(key);
+            collected.set(key, previous ? { ...(result.rank < previous.rank ? result : previous), previewUnavailable: previous.previewUnavailable || result.previewUnavailable } : result);
+            setResults([...collected.values()].sort((a, b) => a.rank - b.rank || (Date.parse(b.createdAt ?? '') || 0) - (Date.parse(a.createdAt ?? '') || 0)));
+          });
+          succeeded += 1;
+          totals.posts += jobFetched.posts;
+          totals.shop += jobFetched.shop;
+          setFetched({ ...totals });
+        } catch (caught) {
+          failures.push(caught instanceof Error ? caught.message : 'Search failed.');
+        } finally {
           completed += 1;
-          setProgress({ completed, total: searchShops.length });
+          setProgress({ completed, total: jobs.length });
         }
       }
-      await Promise.all(Array.from({ length: Math.min(3, searchShops.length) }, worker));
-      if (failures.length === searchShops.length) throw new Error('None of the saved shops could be searched.');
-      const seen = new Set<string>();
-      const unique = collected.filter(result => {
-        const key = result.id || result.postUrl || result.shopUrl || `${result.seller}-${result.title}`;
-        if (seen.has(key)) return false;
-        seen.add(key); return true;
-      }).sort((a, b) => a.rank - b.rank || Date.parse(b.createdAt ?? '') - Date.parse(a.createdAt ?? ''));
-      setResults(unique); setFetched(totals);
-      if (failures.length) setShopMessage(`Skipped ${failures.length} unavailable shop${failures.length === 1 ? '' : 's'}: ${failures.join(', ')}`);
-    } catch (caught) {
-      setResults([]); setFetched(null); setError(caught instanceof Error ? caught.message : 'Search failed.');
+    }
+    try {
+      await Promise.all(Array.from({ length: Math.min(3, jobs.length) }, worker));
+      if (!succeeded && !collected.size) setError(jobs.length === 1 ? failures[0] : 'None of the searches could be completed.');
+      else if (failures.length) setSearchWarning(`${failures.length} of ${jobs.length} searches could not be completed.`);
     } finally { setLoading(false); }
   }
 
@@ -149,10 +195,17 @@ export default function App() {
         <button type="button" disabled={addingShop} onClick={() => void addShop()}>{addingShop ? 'Checking…' : 'Add shop'} <span>＋</span></button>
       </div>
       {shopMessage && <p className="shop-message" role="status">{shopMessage}</p>}
-      <div className="field-grid">
-        <div className="field"><label htmlFor="date">Date <span>YYMMDD</span></label><input id="date" inputMode="numeric" pattern="\d{6}" maxLength={6} value={date} onChange={e => setDate(e.target.value)} placeholder="260827" /></div>
-        <div className="field"><label htmlFor="name">Idol / name</label><input id="name" value={name} onChange={e => setName(e.target.value)} placeholder="eunchae" /></div>
-        <div className="field"><label htmlFor="count">Exact file count <span>optional</span></label><input id="count" type="number" min="1" value={count} onChange={e => setCount(e.target.value)} placeholder="2075" /></div>
+      <div className="search-sets">
+        {searchSets.map((set, index) => <div className="search-set" key={set.id}>
+          <div className="search-set-heading"><span>Set {String(index + 1).padStart(2, '0')}</span>{searchSets.length > 1 && <button type="button" onClick={() => setSearchSets(sets => sets.filter(item => item.id !== set.id))} aria-label={`Remove set ${index + 1}`}>Remove</button>}</div>
+          <div className="field-grid">
+            <div className="field"><label htmlFor={`date-${set.id}`}>Date <span>YYMMDD</span></label><input id={`date-${set.id}`} inputMode="numeric" pattern="\d{6}" maxLength={6} value={set.date} onChange={e => updateSearchSet(set.id, { date: e.target.value })} onPaste={e => handleCluePaste(e, set.id)} placeholder="260827" /></div>
+            <div className="field"><label htmlFor={`name-${set.id}`}>Idol / name</label><input id={`name-${set.id}`} value={set.name} onChange={e => updateSearchSet(set.id, { name: e.target.value })} onPaste={e => handleCluePaste(e, set.id)} placeholder="eunchae" /></div>
+            <div className="field"><label htmlFor={`count-${set.id}`}>Exact file count <span>optional</span></label><input id={`count-${set.id}`} type="number" min="1" value={set.count} onChange={e => updateSearchSet(set.id, { count: e.target.value })} placeholder="2075" /></div>
+          </div>
+        </div>)}
+        <button className="add-set" type="button" onClick={addSearchSet}><span aria-hidden="true">＋</span> Add search set</button>
+        <p className="paste-hint">Paste “261010 Kim Chaewon” into Date or Idol / name to fill both fields.</p>
       </div>
       <div className="controls">
         <fieldset><legend>Search source</legend><div className="segmented source-options">{(['posts', 'shop', 'both', 'all-shop'] as Source[]).map(item => <label key={item}><input type="radio" name="source" checked={source === item} onChange={() => setSource(item)} /><span>{item === 'shop' ? 'Shop' : item === 'all-shop' ? 'All shops' : item[0].toUpperCase() + item.slice(1)}</span></label>)}</div></fieldset>
@@ -163,10 +216,11 @@ export default function App() {
     </form>
 
     <section className="results" aria-live="polite">
-      {loading && <div className="state loading-state"><div className="spinner" /><h2>{source === 'all-shop' ? 'Searching every saved shop' : 'Searching the full archive'}</h2><p>{source === 'all-shop' ? `${progress.completed} of ${progress.total} shops complete · posts + listings` : 'Fetching and checking every available page…'}</p><div className={`progress-track ${source === 'all-shop' ? 'determinate' : ''}`} role="progressbar" aria-label="Loading search results" aria-valuemin={0} aria-valuemax={100} aria-valuenow={source === 'all-shop' ? progressPercent : undefined}><span style={source === 'all-shop' ? { width: `${progressPercent}%` } : undefined} /></div><small>{source === 'all-shop' ? `${progressPercent}% complete` : 'Large seller archives can take a little longer'}</small></div>}
+      {loading && <div className="state loading-state"><div className="spinner" /><h2>Searching the archive</h2><p>{progress.completed} of {progress.total} searches complete · matches appear as they arrive</p><div className="progress-track determinate" role="progressbar" aria-label="Search progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><span style={{ width: `${progressPercent}%` }} /></div><small>{progressPercent}% complete</small></div>}
       {!loading && error && <div className="state error"><b>!</b><h2>Search hit a snag</h2><p>{error}</p></div>}
+      {searchWarning && <p className="search-warning" role="status">{searchWarning}</p>}
       {!loading && !error && searched && results.length === 0 && <div className="state"><b>0</b><h2>No matching sets</h2><p>Try Broad mode, remove the file count, or include inactive listings.</p></div>}
-      {!loading && !error && results.length > 0 && <>
+      {results.length > 0 && <>
         <div className="results-head"><div><span>Search results</span><h2>{results.length} {results.length === 1 ? 'match' : 'matches'}</h2></div>{fetched && <p>Scanned {fetched.posts} posts + {fetched.shop} listings</p>}</div>
         <div className="result-list">{results.map((result, index) => <article key={`${result.seller}-${result.source}-${result.id}`}>
           <div className="rank">{String(index + 1).padStart(2, '0')}</div>

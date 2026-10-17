@@ -152,22 +152,34 @@ func findArray(value any) []any {
 	return nil
 }
 
-func (c *Client) fetchAll(ctx context.Context, endpoint func(int) string, pageSize int) ([]map[string]any, error) {
-	all := make([]map[string]any, 0)
+func (c *Client) fetchPages(ctx context.Context, endpoint func(int) string, pageSize int, onPage func([]map[string]any) error) error {
 	for page := 1; page <= 100; page++ {
 		var payload any
 		if err := c.getJSON(ctx, endpoint(page), &payload); err != nil {
-			return nil, err
+			return err
 		}
 		batch := findArray(payload)
+		records := make([]map[string]any, 0, len(batch))
 		for _, item := range batch {
-			all = append(all, object(item))
+			records = append(records, object(item))
+		}
+		if err := onPage(records); err != nil {
+			return err
 		}
 		if len(batch) < pageSize {
 			break
 		}
 	}
-	return all, nil
+	return nil
+}
+
+func (c *Client) fetchAll(ctx context.Context, endpoint func(int) string, pageSize int) ([]map[string]any, error) {
+	all := make([]map[string]any, 0)
+	err := c.fetchPages(ctx, endpoint, pageSize, func(records []map[string]any) error {
+		all = append(all, records...)
+		return nil
+	})
+	return all, err
 }
 
 func (c *Client) FetchPosts(ctx context.Context, userID string) ([]map[string]any, error) {
@@ -180,4 +192,16 @@ func (c *Client) FetchServices(ctx context.Context, userID string) ([]map[string
 	return c.fetchAll(ctx, func(page int) string {
 		return fmt.Sprintf("%s/catalogs/services?userId=%s&page=%d&per_page=100&order_by=createdAt%%20desc", apiBase, url.QueryEscape(userID), page)
 	}, 100)
+}
+
+func (c *Client) StreamPosts(ctx context.Context, userID string, onPage func([]map[string]any) error) error {
+	return c.fetchPages(ctx, func(page int) string {
+		return fmt.Sprintf("%s/posts?author=%s&page=%d&perPage=200", apiBase, url.QueryEscape(userID), page)
+	}, 200, onPage)
+}
+
+func (c *Client) StreamServices(ctx context.Context, userID string, onPage func([]map[string]any) error) error {
+	return c.fetchPages(ctx, func(page int) string {
+		return fmt.Sprintf("%s/catalogs/services?userId=%s&page=%d&per_page=100&order_by=createdAt%%20desc", apiBase, url.QueryEscape(userID), page)
+	}, 100, onPage)
 }

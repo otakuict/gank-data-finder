@@ -101,6 +101,8 @@ func recordID(raw map[string]any) string {
 	return string(encoded)
 }
 
+func RecordID(raw map[string]any) string { return recordID(raw) }
+
 func status(raw map[string]any, source string) string {
 	if source == "Post" {
 		return "active"
@@ -258,6 +260,10 @@ func toResult(raw map[string]any, source string, params types.SearchParams, know
 		title = "(untitled)"
 	}
 	return &types.SearchResult{ID: id, Seller: params.Seller, Source: source, Title: title, CreatedAt: createdAt, FileCount: fileCount, Status: resultStatus, Excerpt: excerpt(body), PostURL: postURL, ShopURL: shopURL, ExternalURL: externalURL, PreviewURL: previewURL, PreviewUnavailable: previewUnavailable, MatchExplanation: explanation, Rank: rank}
+}
+
+func MatchRecord(raw map[string]any, source string, params types.SearchParams, knownPosts map[string]bool) *types.SearchResult {
+	return toResult(raw, source, params, knownPosts)
 }
 
 func SearchRecords(posts, services []map[string]any, params types.SearchParams) []types.SearchResult {
