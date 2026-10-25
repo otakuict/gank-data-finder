@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -19,7 +20,7 @@ var (
 	separatorsPattern = regexp.MustCompile(`[_-]+`)
 	spacesPattern     = regexp.MustCompile(`\s+`)
 	datePattern       = regexp.MustCompile(`[0-9]{6}`)
-	countPattern      = regexp.MustCompile(`(?i)([0-9]{1,6})\s*(\+)?\s*(pics?|pictures?|photos?|images?|files?|p)\b`)
+	countPattern      = regexp.MustCompile(`(?i)([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,6})\s*(\+)?\s*(pics?|pictures?|photos?|images?|files?|p)\b`)
 	tagPattern        = regexp.MustCompile(`<[^>]*>`)
 	previewPattern    = regexp.MustCompile(`(?i)https?://(?:www\.)?ganknow\.com/post/[^\s<>"']+`)
 	externalPattern   = regexp.MustCompile(`(?i)https?://(?:[^\s<>"']+\.)?(?:gumroad\.com|ko-fi\.com)/[^\s<>"']+`)
@@ -57,7 +58,7 @@ func ExtractCounts(text string) []types.ExtractedCount {
 		if match[0] > 0 && text[match[0]-1] >= '0' && text[match[0]-1] <= '9' {
 			continue
 		}
-		value, err := strconv.Atoi(text[match[2]:match[3]])
+		value, err := strconv.Atoi(strings.ReplaceAll(text[match[2]:match[3]], ",", ""))
 		if err != nil || value < 1 {
 			continue
 		}
@@ -237,7 +238,10 @@ func toResult(raw map[string]any, source string, params types.SearchParams, know
 		postURL = previewURL
 		shopURL = direct
 		if shopURL == nil {
-			value := "https://ganknow.com/" + params.Seller + "/services/" + id
+			value := "https://ganknow.com/" + url.PathEscape(params.Seller) + "?tab=shop"
+			if slug := strings.TrimSpace(stringValue(raw, "slug")); slug != "" {
+				value = "https://ganknow.com/services/" + url.PathEscape(slug)
+			}
 			shopURL = &value
 		}
 	}

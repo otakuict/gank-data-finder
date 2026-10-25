@@ -230,7 +230,7 @@ export default function App() {
             <div className="meta"><span className="seller-label" style={{ '--seller-color': sellerColor(result.seller) } as CSSProperties}>@{result.seller}</span><span>{result.createdAt ? new Date(result.createdAt).toLocaleDateString() : 'Unknown date'}</span><span>{result.fileCount ? `${result.fileCount.value.toLocaleString()}${result.fileCount.approximate ? '+' : ''} files${result.fileCount.approximate ? ' (approx.)' : ''}` : 'Count not found'}</span></div>
             {result.excerpt && <p className="excerpt">{result.excerpt}</p>}
             <p className="why">{result.matchExplanation}</p>
-            <div className="links">{result.postUrl && <a href={result.postUrl} target="_blank">{result.source === 'Shop' ? 'Preview post' : 'Open post'} ↗</a>}{result.shopUrl && <a href={result.shopUrl} target="_blank">Shop listing ↗</a>}{result.externalUrl && <a href={result.externalUrl} target="_blank">External store ↗</a>}</div>
+            <div className="links">{result.postUrl && <a href={result.postUrl} target="_blank">{result.source === 'Shop' ? 'Preview post' : 'Open post'} ↗</a>}{result.shopUrl && <a href={result.shopUrl} target="_blank">{result.shopUrl.endsWith('?tab=shop') ? 'Seller shop' : 'Shop listing'} ↗</a>}{result.externalUrl && <a href={result.externalUrl} target="_blank">External store ↗</a>}</div>
           </div>
         </article>)}</div>
       </>}
