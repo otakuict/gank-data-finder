@@ -44,6 +44,8 @@ export default function App() {
   const [error, setError] = useState('');
   const [searchWarning, setSearchWarning] = useState('');
   const [searched, setSearched] = useState(false);
+  const [stopped, setStopped] = useState(false);
+  const searchController = useRef<AbortController | null>(null);
 
   function updateSearchSet(id: number, changes: Partial<SearchSet>) {
     setSearchSets(sets => sets.map(set => set.id === id ? { ...set, ...changes } : set));
@@ -69,8 +71,8 @@ export default function App() {
     return query;
   }
 
-  async function requestSearch(sellerName: string, requestSource: 'posts' | 'shop' | 'both', set: SearchSet, onResult: (result: Result) => void): Promise<Fetched> {
-    const response = await fetch(`/api/search/stream?${buildQuery(sellerName, requestSource, set)}`);
+  async function requestSearch(sellerName: string, requestSource: 'posts' | 'shop' | 'both', set: SearchSet, signal: AbortSignal, onResult: (result: Result) => void): Promise<Fetched> {
+    const response = await fetch(`/api/search/stream?${buildQuery(sellerName, requestSource, set)}`, { signal });
     if (!response.ok) {
       const payload = await response.json();
       throw new Error(payload.error || `Search failed for ${sellerName}.`);
@@ -131,14 +133,24 @@ export default function App() {
     if (event.key === 'Enter') { event.preventDefault(); void addShop(); }
   }
 
+  function stopSearch() {
+    searchController.current?.abort();
+    searchController.current = null;
+    setLoading(false);
+    setStopped(true);
+  }
+
   async function search(event: FormEvent) {
     event.preventDefault();
+    if (searchController.current) return;
     const activeSets = searchSets.filter(set => set.date.trim() || set.name.trim() || set.count.trim());
-    setError(''); setSearchWarning(''); setSearched(true); setResults([]); setFetched(null);
+    setError(''); setSearchWarning(''); setStopped(false); setSearched(true); setResults([]); setFetched(null);
     if (!activeSets.length) { setError('Enter a date, idol/name, or file count in at least one set.'); return; }
 
     const searchShops = source === 'all-shop' ? shops : [seller];
     const jobs = activeSets.flatMap(set => searchShops.map(shop => ({ set, shop })));
+    const controller = new AbortController();
+    searchController.current = controller;
     setLoading(true);
     setProgress({ completed: 0, total: jobs.length });
 
@@ -149,32 +161,40 @@ export default function App() {
     let completed = 0;
     let succeeded = 0;
     async function worker() {
-      while (nextIndex < jobs.length) {
+      while (!controller.signal.aborted && nextIndex < jobs.length) {
         const job = jobs[nextIndex++];
         try {
-          const jobFetched = await requestSearch(job.shop, source === 'all-shop' ? 'both' : source, job.set, result => {
+          const jobFetched = await requestSearch(job.shop, source === 'all-shop' ? 'both' : source, job.set, controller.signal, result => {
+            if (controller.signal.aborted) return;
             const key = `${result.seller}:${result.source}:${result.id || result.postUrl || result.shopUrl || result.title}`;
             const previous = collected.get(key);
             collected.set(key, previous ? { ...(result.rank < previous.rank ? result : previous), previewUnavailable: previous.previewUnavailable || result.previewUnavailable } : result);
             setResults([...collected.values()].sort((a, b) => a.rank - b.rank || (Date.parse(b.createdAt ?? '') || 0) - (Date.parse(a.createdAt ?? '') || 0)));
           });
+          if (controller.signal.aborted) return;
           succeeded += 1;
           totals.posts += jobFetched.posts;
           totals.shop += jobFetched.shop;
           setFetched({ ...totals });
         } catch (caught) {
-          failures.push(caught instanceof Error ? caught.message : 'Search failed.');
+          if (!controller.signal.aborted) failures.push(caught instanceof Error ? caught.message : 'Search failed.');
         } finally {
           completed += 1;
-          setProgress({ completed, total: jobs.length });
+          if (!controller.signal.aborted) setProgress({ completed, total: jobs.length });
         }
       }
     }
     try {
       await Promise.all(Array.from({ length: Math.min(3, jobs.length) }, worker));
+      if (controller.signal.aborted || searchController.current !== controller) return;
       if (!succeeded && !collected.size) setError(jobs.length === 1 ? failures[0] : 'None of the searches could be completed.');
       else if (failures.length) setSearchWarning(`${failures.length} of ${jobs.length} searches could not be completed.`);
-    } finally { setLoading(false); }
+    } finally {
+      if (searchController.current === controller) {
+        searchController.current = null;
+        setLoading(false);
+      }
+    }
   }
 
   const progressPercent = Math.round((progress.completed / Math.max(progress.total, 1)) * 100);
@@ -211,7 +231,7 @@ export default function App() {
         <fieldset><legend>Search source</legend><div className="segmented source-options">{(['posts', 'shop', 'both', 'all-shop'] as Source[]).map(item => <label key={item}><input type="radio" name="source" checked={source === item} onChange={() => setSource(item)} /><span>{item === 'shop' ? 'Shop' : item === 'all-shop' ? 'All shops' : item[0].toUpperCase() + item.slice(1)}</span></label>)}</div></fieldset>
         <fieldset><legend>Match mode</legend><div className="segmented"><label><input type="radio" name="mode" checked={mode === 'exact'} onChange={() => setMode('exact')} /><span>Exact</span></label><label><input type="radio" name="mode" checked={mode === 'broad'} onChange={() => setMode('broad')} /><span>Broad</span></label></div></fieldset>
         <label className="check"><input type="checkbox" checked={includeInactive} onChange={e => setIncludeInactive(e.target.checked)} /><span>Include inactive / sold-out</span></label>
-        <button className="submit" disabled={loading}>{loading ? 'Searching…' : source === 'all-shop' ? `Search ${shops.length} shops` : 'Search archive'}<span aria-hidden="true">↗</span></button>
+        <button className={`submit${loading ? ' stop' : ''}`} type={loading ? 'button' : 'submit'} onClick={loading ? stopSearch : undefined}>{loading ? 'Stop search' : source === 'all-shop' ? `Search ${shops.length} shops` : 'Search archive'}<span aria-hidden="true">{loading ? '■' : '↗'}</span></button>
       </div>
     </form>
 
@@ -219,7 +239,8 @@ export default function App() {
       {loading && <div className="state loading-state"><div className="spinner" /><h2>Searching the archive</h2><p>{progress.completed} of {progress.total} searches complete · matches appear as they arrive</p><div className="progress-track determinate" role="progressbar" aria-label="Search progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><span style={{ width: `${progressPercent}%` }} /></div><small>{progressPercent}% complete</small></div>}
       {!loading && error && <div className="state error"><b>!</b><h2>Search hit a snag</h2><p>{error}</p></div>}
       {searchWarning && <p className="search-warning" role="status">{searchWarning}</p>}
-      {!loading && !error && searched && results.length === 0 && <div className="state"><b>0</b><h2>No matching sets</h2><p>Try Broad mode, remove the file count, or include inactive listings.</p></div>}
+      {stopped && results.length > 0 && <p className="search-warning" role="status">Search stopped. Showing results found so far.</p>}
+      {!loading && !error && searched && results.length === 0 && <div className="state"><b>{stopped ? '■' : '0'}</b><h2>{stopped ? 'Search stopped' : 'No matching sets'}</h2><p>{stopped ? 'You can change the clues and search again.' : 'Try Broad mode, remove the file count, or include inactive listings.'}</p></div>}
       {results.length > 0 && <>
         <div className="results-head"><div><span>Search results</span><h2>{results.length} {results.length === 1 ? 'match' : 'matches'}</h2></div>{fetched && <p>Scanned {fetched.posts} posts + {fetched.shop} listings</p>}</div>
         <div className="result-list">{results.map((result, index) => <article key={`${result.seller}-${result.source}-${result.id}`}>
