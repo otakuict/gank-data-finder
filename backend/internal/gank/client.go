@@ -44,6 +44,9 @@ func NewClient() *Client {
 }
 
 func (c *Client) getJSON(ctx context.Context, endpoint string, target any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c.mu.RLock()
 	cached, ok := c.cache[endpoint]
 	c.mu.RUnlock()
@@ -154,6 +157,9 @@ func findArray(value any) []any {
 
 func (c *Client) fetchPages(ctx context.Context, endpoint func(int) string, pageSize int, onPage func([]map[string]any) error) error {
 	for page := 1; page <= 100; page++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		var payload any
 		if err := c.getJSON(ctx, endpoint(page), &payload); err != nil {
 			return err
@@ -162,6 +168,9 @@ func (c *Client) fetchPages(ctx context.Context, endpoint func(int) string, page
 		records := make([]map[string]any, 0, len(batch))
 		for _, item := range batch {
 			records = append(records, object(item))
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if err := onPage(records); err != nil {
 			return err

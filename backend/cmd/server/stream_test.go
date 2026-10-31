@@ -14,6 +14,25 @@ import (
 
 type stagedStreamer struct{ continueSearch <-chan struct{} }
 
+type cancelAwareStreamer struct{ stopped chan struct{} }
+
+func (s cancelAwareStreamer) ResolveUserID(context.Context, string) (string, error) {
+	return "seller-id", nil
+}
+
+func (s cancelAwareStreamer) StreamPosts(ctx context.Context, _ string, onPage func([]map[string]any) error) error {
+	if err := onPage([]map[string]any{{"uuid": "first", "title": "260827 CHAEWON first"}}); err != nil {
+		return err
+	}
+	<-ctx.Done()
+	close(s.stopped)
+	return ctx.Err()
+}
+
+func (s cancelAwareStreamer) StreamServices(context.Context, string, func([]map[string]any) error) error {
+	return nil
+}
+
 func (s stagedStreamer) ResolveUserID(context.Context, string) (string, error) {
 	return "seller-id", nil
 }
@@ -87,5 +106,35 @@ func TestStreamSearchEmitsResultsBeforeSearchCompletes(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("timed out waiting for %s event", want)
 		}
+	}
+}
+
+func TestStreamSearchCancelsWorkWhenClientStops(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	streamer := cancelAwareStreamer{stopped: make(chan struct{})}
+	router := gin.New()
+	registerStreamSearch(router, streamer)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/search/stream?seller=test&source=posts&mode=exact&date=260827&name=chaewon", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bufio.NewScanner(response.Body).Scan() {
+		t.Fatal("expected a streamed result before stopping")
+	}
+	cancel()
+	response.Body.Close()
+	select {
+	case <-streamer.stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server kept searching after the client stopped")
 	}
 }

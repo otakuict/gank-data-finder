@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, useRef, useState, type ClipboardEvent, type CSSProperties } from 'react';
+import { FormEvent, KeyboardEvent, useRef, useState, type ClipboardEvent, type CSSProperties, type MouseEvent } from 'react';
 
 const defaultShops = ['idolxdata', 'kdatastudio', 'yoichi69', 'idollove', 'loveshakedata', 'datacoffeeshop','girlskpopphoto','dubudatamaster'];
 type Source = 'posts' | 'shop' | 'both' | 'all-shop';
@@ -133,7 +133,8 @@ export default function App() {
     if (event.key === 'Enter') { event.preventDefault(); void addShop(); }
   }
 
-  function stopSearch() {
+  function stopSearch(event: MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
     searchController.current?.abort();
     searchController.current = null;
     setLoading(false);

@@ -45,6 +45,9 @@ func registerStreamSearch(router *gin.Engine, client searchStreamer) {
 		c.Writer.Flush()
 
 		emit := func(value gin.H) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			encoded, err := json.Marshal(value)
 			if err != nil {
 				return err
@@ -63,6 +66,9 @@ func registerStreamSearch(router *gin.Engine, client searchStreamer) {
 			go func() {
 				defer wait.Done()
 				err := fetch(ctx, userID, func(records []map[string]any) error {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
 					select {
 					case pages <- searchPage{source: source, records: records}:
 						return nil
@@ -93,6 +99,9 @@ func registerStreamSearch(router *gin.Engine, client searchStreamer) {
 		var searchError error
 		var postsFailed bool
 		for page := range pages {
+			if ctx.Err() != nil {
+				return
+			}
 			if page.err != nil {
 				if searchError == nil {
 					searchError = page.err
@@ -111,6 +120,9 @@ func registerStreamSearch(router *gin.Engine, client searchStreamer) {
 				fetchedShops += len(page.records)
 			}
 			for _, record := range page.records {
+				if ctx.Err() != nil {
+					return
+				}
 				result := search.MatchRecord(record, page.source, params, knownPosts)
 				if result == nil {
 					continue
